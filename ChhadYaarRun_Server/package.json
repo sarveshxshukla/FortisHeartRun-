@@ -1,0 +1,10 @@
+{
+  "name": "chhad-yaar-run-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Serves the Chhad Yaar Run game, stores entries and issues voucher codes",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "xlsx": "^0.18.5" },
+  "engines": { "node": ">=18" }
+}
