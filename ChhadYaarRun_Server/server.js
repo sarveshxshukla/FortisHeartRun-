@@ -28,28 +28,39 @@ const ADMIN_KEY = process.env.ADMIN_KEY || 'change-me';
 
 /* ---- campaign rules (override with environment variables in Coolify) ---- */
 const RULES = {
-  minScoreConsult : +(process.env.MIN_SCORE_CONSULT || 5000), // 50% off cardiac consultation
-  packagesForFull : +(process.env.PACKAGES_FOR_FULL || 3),    // all three golden hearts
-  maxVouchersDay  : +(process.env.MAX_VOUCHERS_DAY  || 5),
-  validTill       : process.env.VALID_TILL || '31 Oct 2026',
-  pools: {
-    consult: {prefix:'FHMHEART@OPD', from:1, to:+(process.env.OPD_CODES||50),
-              label:'50% off Cardiac Consultation'},
-    package: {prefix:'FHMHEART@PHC', from:1, to:+(process.env.PHC_CODES||30),
-              label:'Complimentary Cardiac Package worth Rs. 999'}
-  }
+  maxVouchersDay : +(process.env.MAX_VOUCHERS_DAY || 5),
+  validTill      : process.env.VALID_TILL || '31 Oct 2026',
+  /* Prize tiers, best first. A run is checked against these in order. */
+  tiers: [
+    {kind:'package',     minScore:+(process.env.MIN_SCORE_PACKAGE||10000),
+     minPacks:+(process.env.PACKAGES_FOR_FULL||3),
+     label:'Complimentary Cardiac Package worth Rs. 999',
+     prefix:process.env.PHC_PREFIX||'FHMHEART@PHC', to:+(process.env.PHC_CODES||30)},
+    {kind:'freeConsult', minScore:+(process.env.MIN_SCORE_FREE||12000), minPacks:0,
+     label:'Free Cardiac Consultation',
+     prefix:process.env.FOC_PREFIX||'FHMHEART@FOC', to:+(process.env.FOC_CODES||30)},
+    {kind:'consult',     minScore:+(process.env.MIN_SCORE_CONSULT||8000), minPacks:0,
+     label:'50% off Cardiac Consultation',
+     prefix:process.env.OPD_PREFIX||'FHMHEART@OPD', to:+(process.env.OPD_CODES||50)}
+  ],
+  /* Playing at the stall vs playing from a link someone shared */
+  kioskKey      : process.env.KIOSK_KEY || '',
+  publicPlay    : (process.env.PUBLIC_PLAY||'on').toLowerCase()!=='off',
+  requireCamera : (process.env.REQUIRE_CAMERA||'on').toLowerCase()!=='off',
+  minCameraMoves: +(process.env.MIN_CAMERA_MOVES||4)
 };
 const pad2 = n => String(n).padStart(2,'0');
-const codeList = p => { const a=[]; for(let i=p.from;i<=p.to;i++) a.push(p.prefix+' - '+pad2(i)); return a; };
+const codeList = t => { const a=[]; for(let i=1;i<=t.to;i++) a.push(t.prefix+' - '+pad2(i)); return a; };
 
 /* ---- storage: one JSON file, written atomically ---- */
 const DB_FILE = path.join(DATA_DIR, 'db.json');
-let DB = {entries:[], issued:{consult:[], package:[]}};
+let DB = {entries:[], runs:[], issued:{consult:[], package:[]}};
 function loadDB(){
   try{ fs.mkdirSync(DATA_DIR,{recursive:true});
        if(fs.existsSync(DB_FILE)) DB = JSON.parse(fs.readFileSync(DB_FILE,'utf8'));
   }catch(e){ console.error('DB load failed, starting empty:', e.message); }
-  DB.entries = DB.entries||[]; DB.issued = DB.issued||{consult:[],package:[]};
+  DB.entries = DB.entries||[]; DB.runs = DB.runs||[]; DB.issued = DB.issued||{consult:[],package:[]};
+  migrateToOnePerMobile();
 }
 let saveTimer=null, saving=false;
 function saveDB(){
@@ -62,6 +73,33 @@ function saveDB(){
     saving=false;
   }, 250);
 }
+/* Older data had one row per run. Collapse it so each mobile number
+   appears once, keeping the first registration details and the best run. */
+function migrateToOnePerMobile(){
+  if(!DB.entries.length || DB.entries[0].plays!==undefined) return;
+  const byMobile = new Map(), merged = [];
+  for(const e of DB.entries){
+    DB.runs.push({day:e.day,time:e.time,mobile:e.mobile,name:e.name,score:e.score|0,
+                  packs:e.packs|0,good:e.good|0,hits:e.hits|0,distance:e.distance|0,
+                  voucherCode:e.voucherCode||''});
+    const key = digits(e.mobile) || ('x'+e.id);
+    const prev = byMobile.get(key);
+    if(!prev){ byMobile.set(key, Object.assign({}, e, {plays:1, lastDay:e.day, lastTime:e.time})); merged.push(key); }
+    else {
+      prev.plays++; prev.lastDay=e.day; prev.lastTime=e.time;
+      prev.packs = Math.max(prev.packs|0, e.packs|0);
+      if((e.score|0) > (prev.score|0)){
+        prev.score=e.score|0; prev.heartPct=e.heartPct|0; prev.good=e.good|0;
+        prev.hits=e.hits|0; prev.distance=e.distance|0;
+      }
+      if(e.voucherCode && !prev.voucherCode){ prev.voucherCode=e.voucherCode; prev.voucherLabel=e.voucherLabel; }
+      if(e.consent==='yes') prev.consent='yes';
+    }
+  }
+  DB.entries = merged.map(k=>byMobile.get(k));
+  console.log('Merged old rows into', DB.entries.length, 'players');
+  saveDB();
+}
 const istDay = (d=new Date()) =>
   new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
 const istTime = (d=new Date()) =>
@@ -69,9 +107,15 @@ const istTime = (d=new Date()) =>
 const digits = s => String(s||'').replace(/\D/g,'');
 
 /* ---- the voucher rules, applied in one place ---- */
-function decideVoucher(entry){
-  const mob = digits(entry.mobile);
+function decideVoucher(run){
+  const mob = digits(run.mobile);
   if(mob.length < 10) return {voucher:null, reason:'A mobile number is needed to claim a voucher'};
+
+  /* vouchers are for people physically playing at the stall */
+  if(RULES.kioskKey && run.kioskKey !== RULES.kioskKey)
+    return {voucher:null, reason:'Vouchers can only be won at the Fortis stall'};
+  if(RULES.requireCamera && (run.cameraMoves|0) < RULES.minCameraMoves)
+    return {voucher:null, reason:'Play with the camera at the Fortis stall to win a voucher'};
 
   // one voucher per phone number, ever - but they may keep playing
   const already = DB.entries.find(e => digits(e.mobile)===mob && e.voucherCode);
@@ -82,19 +126,19 @@ function decideVoucher(entry){
   if(todayCount >= RULES.maxVouchersDay)
     return {voucher:null, reason:"Today's vouchers are all claimed - do come back tomorrow"};
 
-  // which prize? the package (all three golden hearts) outranks the consultation
-  let kind = null;
-  if((entry.packs|0) >= RULES.packagesForFull)          kind='package';
-  else if((entry.score|0) >= RULES.minScoreConsult)     kind='consult';
-  if(!kind) return {voucher:null, reason:'Score '+RULES.minScoreConsult+'+ or all three golden hearts to win'};
+  // best tier the run qualifies for
+  const tier = RULES.tiers.find(t => (run.score|0) >= t.minScore && (run.packs|0) >= (t.minPacks|0));
+  if(!tier){
+    const low = RULES.tiers[RULES.tiers.length-1];
+    return {voucher:null, reason:'Score '+low.minScore.toLocaleString('en-IN')+'+ to win a voucher'};
+  }
+  DB.issued[tier.kind] = DB.issued[tier.kind] || [];
+  const used = new Set(DB.issued[tier.kind]);
+  const code = codeList(tier).find(c => !used.has(c));
+  if(!code) return {voucher:null, reason:'All '+tier.label+' codes have been claimed'};
 
-  const pool = codeList(RULES.pools[kind]);
-  const used = new Set(DB.issued[kind]);
-  const code = pool.find(c => !used.has(c));
-  if(!code) return {voucher:null, reason:'All '+RULES.pools[kind].label+' codes have been claimed'};
-
-  DB.issued[kind].push(code);
-  return {voucher:{kind, code, label:RULES.pools[kind].label, validTill:RULES.validTill}};
+  DB.issued[tier.kind].push(code);
+  return {voucher:{kind:tier.kind, code, label:tier.label, validTill:RULES.validTill}};
 }
 
 /* ---- request helpers ---- */
@@ -113,10 +157,12 @@ const authed = q => q.key === ADMIN_KEY;
 
 /* ---- the table used for the panel and for Excel ---- */
 const COLUMNS = [
-  ['day','Date'],['time','Time'],['name','Name'],['mobile','Mobile'],
+  ['day','First played'],['time','Time'],['name','Name'],['mobile','Mobile'],
   ['age','Age group'],['checkup','Last check-up'],['consent','Consent to contact'],
-  ['score','Score'],['heartPct','Heart %'],['packs','Golden hearts'],
+  ['plays','Plays'],['score','Best score'],['heartPct','Heart %'],['packs','Golden hearts'],
   ['good','Good habits'],['hits','Hits'],['distance','Distance (m)'],
+  ['lastDay','Last played'],['lastTime','Last time'],
+  ['source','Played at'],['input','Controlled by'],
   ['voucherLabel','Voucher won'],['voucherCode','Voucher code'],
   ['device','Device'],['appVersion','App version']
 ];
@@ -133,7 +179,11 @@ function xlsx(){
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = COLUMNS.map(c => ({wch: Math.max(10, c[1].length+2)}));
   ws['!autofilter'] = {ref: XLSX.utils.encode_range({s:{r:0,c:0},e:{r:aoa.length-1,c:COLUMNS.length-1}})};
-  XLSX.utils.book_append_sheet(wb, ws, 'Entries');
+  XLSX.utils.book_append_sheet(wb, ws, 'Players');
+  XLSX.utils.book_append_sheet(wb,
+    XLSX.utils.aoa_to_sheet([['Date','Time','Name','Mobile','Score','Golden hearts','Good habits','Hits','Distance (m)','Voucher code']]
+      .concat(DB.runs.map(r=>[r.day,r.time,r.name,r.mobile,r.score,r.packs,r.good,r.hits,r.distance,r.voucherCode]))),
+    'All runs');
   const vouchers = DB.entries.filter(e=>e.voucherCode)
     .map(e=>[e.day,e.time,e.name,e.mobile,e.voucherLabel,e.voucherCode,e.score,e.packs]);
   XLSX.utils.book_append_sheet(wb,
@@ -144,20 +194,20 @@ function xlsx(){
 
 function stats(){
   const today = istDay();
-  const t = DB.entries.filter(e=>e.day===today);
-  const used = k => DB.issued[k].length, total = k => codeList(RULES.pools[k]).length;
+  const t = DB.entries.filter(e=>e.lastDay===today||e.day===today);
+  const runsToday = DB.runs.filter(r=>r.day===today);
+  const used = k => (DB.issued[k]||[]).length;
   return {
     today, rules: RULES,
-    runsTotal: DB.entries.length, runsToday: t.length,
-    playersToday: new Set(t.map(e=>digits(e.mobile)).filter(m=>m.length>=10)).size,
+    runsTotal: DB.runs.length, runsToday: runsToday.length,
+    playersTotal: DB.entries.length,
+    playersToday: t.length,
     consentedTotal: DB.entries.filter(e=>e.consent==='yes').length,
-    vouchersToday: t.filter(e=>e.voucherCode).length,
+    vouchersToday: DB.runs.filter(r=>r.day===today&&r.voucherCode).length,
     vouchersTotal: DB.entries.filter(e=>e.voucherCode).length,
-    codes: {
-      consult:{used:used('consult'), total:total('consult'), left:total('consult')-used('consult')},
-      package:{used:used('package'), total:total('package'), left:total('package')-used('package')}
-    },
-    bestToday: t.reduce((m,e)=>Math.max(m,e.score|0),0)
+    codes: RULES.tiers.map(t=>({kind:t.kind, label:t.label, minScore:t.minScore, minPacks:t.minPacks|0,
+      used:used(t.kind), total:t.to, left:t.to-used(t.kind)})),
+    bestToday: runsToday.reduce((m,r)=>Math.max(m,r.score|0),0)
   };
 }
 
@@ -205,15 +255,51 @@ http.createServer(async (req,res)=>{
       score: b.score|0, heartPct: b.heartPct|0, packs: b.packs|0,
       good: b.good|0, hits: b.hits|0, distance: b.distance|0,
       device: String(b.device||'').slice(0,120), appVersion: String(b.appVersion||'').slice(0,20),
+      source: (RULES.kioskKey && b.kioskKey===RULES.kioskKey) ? 'stall' : 'public',
+      input: (b.cameraMoves|0) >= RULES.minCameraMoves ? 'camera' : 'touch/keys',
+      cameraMoves: b.cameraMoves|0, kioskKey: String(b.kioskKey||'').slice(0,64),
       voucherLabel:'', voucherCode:''
     };
-    const out = decideVoucher(entry);
-    if(out.voucher){ entry.voucherLabel = out.voucher.label; entry.voucherCode = out.voucher.code; }
-    DB.entries.push(entry); saveDB();
-    return send(res,200,{ok:true, id:entry.id, voucher:out.voucher||null,
+    const out = decideVoucher(entry);          // judged on THIS run
+    delete entry.kioskKey;                     // never stored
+
+    /* one row per mobile number: a repeat player updates their row.
+       First registration details are kept; the best run's figures win. */
+    const key = digits(entry.mobile);
+    const prev = key ? DB.entries.find(e => digits(e.mobile)===key) : null;
+    let row;
+    if(prev){
+      prev.plays = (prev.plays|0) + 1;
+      prev.lastDay = entry.day; prev.lastTime = entry.time;
+      prev.packs = Math.max(prev.packs|0, entry.packs|0);
+      if((entry.score|0) > (prev.score|0)){
+        prev.score=entry.score|0; prev.heartPct=entry.heartPct|0;
+        prev.good=entry.good|0; prev.hits=entry.hits|0; prev.distance=entry.distance|0;
+      }
+      if(entry.consent==='yes') prev.consent='yes';
+      prev.device = entry.device; prev.appVersion = entry.appVersion;
+      prev.source = entry.source; prev.input = entry.input;
+      row = prev;
+    } else {
+      entry.plays = 1; entry.lastDay = entry.day; entry.lastTime = entry.time;
+      DB.entries.push(entry); row = entry;
+    }
+    if(out.voucher){ row.voucherLabel = out.voucher.label; row.voucherCode = out.voucher.code; }
+
+    DB.runs.push({day:entry.day, time:entry.time, mobile:entry.mobile, name:entry.name,
+                  score:entry.score, packs:entry.packs, good:entry.good, hits:entry.hits,
+                  distance:entry.distance, voucherCode:out.voucher?out.voucher.code:''});
+    if(DB.runs.length>20000) DB.runs.splice(0, DB.runs.length-20000);
+    saveDB();
+    return send(res,200,{ok:true, id:row.id, plays:row.plays, voucher:out.voucher||null,
                          reason:out.reason||'', already:out.already||''});
   }
 
+  if(p==='/api/config') return send(res,200,{
+    publicPlay: RULES.publicPlay, requireCamera: RULES.requireCamera,
+    validTill: RULES.validTill, maxVouchersDay: RULES.maxVouchersDay,
+    tiers: RULES.tiers.map(t=>({kind:t.kind,label:t.label,minScore:t.minScore,minPacks:t.minPacks|0}))
+  });
   if(p==='/admin')            return serveAdmin(res);
   if(p==='/api/stats')        return authed(q)?send(res,200,stats()):send(res,401,{error:'bad key'});
   if(p==='/api/entries')      return authed(q)
@@ -278,17 +364,18 @@ async function load(){
     const s=await (await fetch('/api/stats?key='+encodeURIComponent(key))).json();
     if(s.error){document.getElementById('note').textContent='Wrong admin key.';return;}
     document.getElementById('cards').innerHTML=
-      card(s.runsToday,'RUNS TODAY')+card(s.playersToday,'PLAYERS TODAY')+card(s.bestToday,'BEST SCORE TODAY')+
+      card(s.playersToday,'PLAYERS TODAY')+card(s.runsToday,'RUNS TODAY')+card(s.bestToday,'BEST SCORE TODAY')+
       card(s.vouchersToday+' / '+s.rules.maxVouchersDay,'VOUCHERS TODAY')+
-      card(s.codes.consult.left,'CONSULT CODES LEFT')+card(s.codes.package.left,'PACKAGE CODES LEFT')+
-      card(s.runsTotal,'RUNS TOTAL')+card(s.consentedTotal,'CONSENTED');
+      s.codes.map(c=>card(c.left,(c.label.toUpperCase().slice(0,22))+' LEFT')).join('')+
+      card(s.playersTotal,'PLAYERS TOTAL')+card(s.runsTotal,'RUNS TOTAL')+card(s.consentedTotal,'CONSENTED');
     document.getElementById('note').textContent=
-      'Voucher rules: score '+s.rules.minScoreConsult+'+ = 50% off consultation · all '+s.rules.packagesForFull+
-      ' golden hearts = complimentary package · one voucher per phone number · max '+s.rules.maxVouchersDay+
-      ' per day · valid till '+s.rules.validTill+'.';
+      'Voucher rules: '+s.codes.map(c=>c.label+' at '+c.minScore.toLocaleString('en-IN')+
+        (c.minPacks?('+ and '+c.minPacks+' golden hearts'):'+')).join(' · ')+
+      ' · one voucher per phone number · max '+s.rules.maxVouchersDay+' per day · valid till '+s.rules.validTill+
+      '. Vouchers only for camera play at the stall'+(s.rules.kioskKey?'':' (stall key not set)')+'.';
     const e=await (await fetch('/api/entries?key='+encodeURIComponent(key)+'&n=200')).json();
     document.getElementById('tbl').innerHTML='<tr>'+e.columns.map(c=>'<th>'+c+'</th>').join('')+'</tr>'+
-      e.rows.map(r=>'<tr>'+r.map((v,i)=>'<td'+((i===14&&v)?' class="win"':'')+'>'+String(v).replace(/[<>&]/g,'')+'</td>').join('')+'</tr>').join('');
+      e.rows.map(r=>'<tr>'+r.map((v,i)=>'<td'+((i===17&&v)?' class="win"':'')+'>'+String(v).replace(/[<>&]/g,'')+'</td>').join('')+'</tr>').join('');
   }catch(err){document.getElementById('note').textContent='Could not reach the server.';}
 }
 load(); setInterval(load,15000);
