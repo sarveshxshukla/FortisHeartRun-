@@ -2138,7 +2138,14 @@ function aiStatus(){
   const b=document.getElementById('aiBadge'); if(!b) return;
   let cls='',txt='';
   if(AI.state==='loading'){cls='wait';txt='Loading motion tracker\u2026';}
-  else if(AI.state==='error'){cls='bad';txt='Tracker failed \u2014 keyboard / touch still work';}
+  else if(AI.state==='error'){
+    cls='bad';
+    const m=String(AI.err&&AI.err.message||'');
+    txt = /missing ai\//.test(m)      ? 'AI files not found \u2014 upload the "ai" folder next to index.html'
+        : location.protocol==='file:' ? 'Open the game from its web address, not the file'
+        : /fetch|network|Failed/i.test(m) ? 'Could not download the AI files \u2014 check the connection'
+        : 'Tracker failed \u2014 keyboard / touch still work';
+  }
   else if(AI.state==='ready'&&CONFIG.useCamera){cls='live';txt='Camera live \u00b7 '+AI.delegate+' '+AI.model+' \u00b7 '+AI.engine+(CAM.flip?' \u00b7 flipped':'');}
   else if(AI.state==='ready'){cls='ok';txt='Tracker ready \u00b7 press C / CAM for camera';}
   else {cls='wait';txt='Motion tracker idle';}
@@ -3380,11 +3387,35 @@ requestAnimationFrame(t=>{lastT=t;frame(t);});
 const CAMPAIGN = {
   api: '',                       // same origin as the page; set a full URL if hosted elsewhere
   validTill: "31st Oct'26",
-  scoreForConsult: 5000,
+  scoreForConsult: 8000,         // 50% off cardiac consultation
+  scoreForFree:    12000,        // free cardiac consultation
+  scoreForPackage: 10000,        // + all three golden hearts = Rs. 999 package
   heartsForPackage: 3,
   maxPerDay: 5,
-  version: 'v8'
+  version: 'v11'
 };
+
+/* ---------- stall vs shared link ----------
+   The kiosk devices are opened once with  ?kiosk=YOUR_KEY  in the address.
+   The key is kept on that device and sent with every run. Anyone opening the
+   plain link can still play, but the server will not issue them a voucher. */
+const KIOSK = (function(){
+  try{
+    const u = new URL(location.href), k = u.searchParams.get('kiosk');
+    if(k){ localStorage.setItem('cyr-kiosk', k);
+           u.searchParams.delete('kiosk'); history.replaceState(null,'',u.toString()); }
+    return localStorage.getItem('cyr-kiosk') || '';
+  }catch(e){ return ''; }
+})();
+
+/* count how many moves actually came from the camera during a run */
+let cameraMoves = 0;
+(function(){
+  const _n = note;
+  note = function(route, a){ if(route==='camera') cameraMoves++; return _n.apply(this, arguments); };
+  const _s = startRun;
+  startRun = function(){ cameraMoves = 0; return _s.apply(this, arguments); };
+})();
 
 /* ---------- Terms & Conditions (shown in full before the first run) ---------- */
 const TERMS_HTML = `
@@ -3396,13 +3427,15 @@ const TERMS_HTML = `
 </ul>
 <h4>Minimum score for winning a voucher</h4>
 <ul>
-  <li><b>Score ${CAMPAIGN.scoreForConsult.toLocaleString('en-IN')} or more</b> &mdash; 50% discount on Cardiac Consultation.</li>
-  <li><b>All ${CAMPAIGN.heartsForPackage} Fortis golden hearts</b> &mdash; Complimentary Cardiac Package worth Rs. 999/-.</li>
+  <li><b>${CAMPAIGN.scoreForConsult.toLocaleString('en-IN')}+</b> &mdash; 50% discount on Cardiac Consultation.</li>
+  <li><b>${CAMPAIGN.scoreForFree.toLocaleString('en-IN')}+</b> &mdash; Free Cardiac Consultation.</li>
+  <li><b>${CAMPAIGN.scoreForPackage.toLocaleString('en-IN')}+ with all ${CAMPAIGN.heartsForPackage} Fortis golden hearts</b>
+      &mdash; Complimentary Cardiac Package worth Rs. 999/-.</li>
 </ul>
-<h4>Applicable vouchers</h4>
+<h4>Where you must play</h4>
 <ul>
-  <li><b>50% discount on Cardiac Consultation</b> &mdash; codes FHMHEART@OPD - 01 to 50.</li>
-  <li><b>Complimentary Cardiac Package worth Rs. 999/-</b> &mdash; codes FHMHEART@PHC - 01 to 30.</li>
+  <li>Vouchers are only issued for games played <b>on the camera at the Fortis stall</b>.
+      Playing from a shared link on a phone does not qualify.</li>
 </ul>
 <h4>Both codes</h4>
 <ul>
@@ -3524,8 +3557,10 @@ function voucherHTML(v, reason, already){
   return `<div class="vk">NO VOUCHER THIS TIME</div>
     <div class="vl" style="font-weight:600">${reason||'Keep playing — you can try as many times as you like.'}</div>
     ${already?`<div class="vn" style="margin-top:6px">Your earlier code: <b>${already}</b></div>`:''}
-    <div class="vn" style="margin-top:6px">Score ${CAMPAIGN.scoreForConsult.toLocaleString('en-IN')}+ wins 50% off a cardiac consultation ·
-      all ${CAMPAIGN.heartsForPackage} golden hearts win the complimentary package</div>`;
+    <div class="vn" style="margin-top:6px">
+      ${CAMPAIGN.scoreForConsult.toLocaleString('en-IN')}+ = 50% off consultation ·
+      ${CAMPAIGN.scoreForFree.toLocaleString('en-IN')}+ = free consultation ·
+      ${CAMPAIGN.scoreForPackage.toLocaleString('en-IN')}+ with all ${CAMPAIGN.heartsForPackage} golden hearts = Rs. 999 package</div>`;
 }
 async function submitRun(){
   const box = document.getElementById('voucherBox'); if(!box) return;
@@ -3537,7 +3572,8 @@ async function submitRun(){
     score: P?P.score|0:0, packs: P?P.packs|0:0,
     heartPct: (typeof heartPct==='function'?heartPct()|0:(P?Math.round(P.heart):0)),
     good: P?P.grabs|0:0, hits: P?P.hits|0:0, distance: Math.round(typeof dist==='number'?dist:0),
-    device: navigator.userAgent.slice(0,120), appVersion: CAMPAIGN.version
+    device: navigator.userAgent.slice(0,120), appVersion: CAMPAIGN.version,
+    kioskKey: KIOSK, cameraMoves: cameraMoves|0
   };
   try{
     const r = await fetch((CAMPAIGN.api||'')+'/api/session', {method:'POST',

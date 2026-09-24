@@ -1,7 +1,7 @@
 /* Chhad Yaar Run - offline cache. AI files are cached on first visit, so the
    game loads fast afterwards and keeps working if the connection drops.
    Bump CACHE when you deploy a new version. */
-const CACHE='chhad-yaar-run-v4';
+const CACHE='chhad-yaar-run-v12';
 const CORE=['./','index.html','manifest.webmanifest','icon-192.png','icon-512.png',
   'ai/vision_bundle.cjs','ai/vision_wasm_internal.js','ai/vision_wasm_internal.wasm','ai/pose_landmarker_lite.task'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE)).then(()=>self.skipWaiting()));});
