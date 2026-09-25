@@ -670,12 +670,12 @@ button{font:inherit;border:0} .btn{margin-top:3.8vh;background:var(--red);color:
         <div class="lg good">
           <div class="lg-head">Grab 💚</div>
           <div class="tiles">
-            <span class="tile" title="Know your BP">🩺<i>BP</i></span>
-            <span class="tile" title="Low cholesterol">💚<i>Cholesterol</i></span>
+            <span class="tile" title="Daily walk">👟<i>Walk</i></span>
+            <span class="tile" title="Eat fresh">💚<i>Eat fresh</i></span>
             <span class="tile" title="Exercise">👟<i>Exercise</i></span>
             <span class="tile" title="Eat healthy">🍎<i>Eat well</i></span>
             <span class="tile" title="Preventive health check">🏥<i>Check-up</i></span>
-            <span class="tile" title="Control blood sugar">🩸<i>Sugar</i></span>
+            <span class="tile" title="Stay hydrated">💧<i>Hydrate</i></span>
             <span class="tile" title="Stay stress free">🧘<i>Calm</i></span>
           </div>
         </div>
@@ -692,21 +692,15 @@ button{font:inherit;border:0} .btn{margin-top:3.8vh;background:var(--red);color:
           <span class="pl" aria-hidden="true">🎂</span>
           <button type="button" data-v="18-25">18–25</button><button type="button" data-v="26-35">26–35</button><button type="button" data-v="36-45">36–45</button><button type="button" data-v="46-55">46–55</button><button type="button" data-v="56+">56+</button>
         </div>
-        <div class="pills" data-for="scr" role="group" aria-label="Last heart check-up (optional)">
-          <span class="pl" aria-hidden="true">🩺</span><span class="pq">Last check-up?</span>
-          <button type="button" data-v="Within 6 months">&lt;6 mo</button><button type="button" data-v="6-12 months">1 yr</button><button type="button" data-v="1-3 years">1–3 yrs</button><button type="button" data-v="Never">Never</button>
-        </div>
         <select id="ageg" hidden aria-hidden="true" tabindex="-1">
           <option value=""></option><option>18-25</option><option>26-35</option><option>36-45</option><option>46-55</option><option>56+</option>
         </select>
-        <select id="scr" hidden aria-hidden="true" tabindex="-1">
-          <option value=""></option><option>Within 6 months</option><option>6-12 months</option><option>1-3 years</option><option>Never</option>
-        </select>
+        <select id="scr" hidden aria-hidden="true" tabindex="-1"><option value=""></option></select>
 
         <label class="consent-toggle">
           <input type="checkbox" id="consent">
           <span class="sw" aria-hidden="true"></span>
-          <span class="ct">📞 Fortis can contact me about heart check-ups<small>Optional. You can play without it.</small></span>
+          <span class="ct">📞 Fortis can contact me with news and offers<small>Optional. You can play without it.</small></span>
         </label>
         <div class="hint" id="pmHint">📱 Add your 10-digit mobile so Fortis can reach you</div>
       </div>
@@ -764,7 +758,7 @@ button{font:inherit;border:0} .btn{margin-top:3.8vh;background:var(--red);color:
           <div class="g-center">
             <div class="g-emoji" id="rEmoji">💚</div>
             <div class="g-pct" id="rpercent">0%</div>
-            <div class="g-lab">heart health</div>
+            <div class="g-lab">score meter</div>
           </div>
         </div>
 
@@ -787,18 +781,18 @@ button{font:inherit;border:0} .btn{margin-top:3.8vh;background:var(--red);color:
 
       <div class="res-cards">
         <div class="rc bad"><div class="rc-h">💔 You took to heart</div><div class="chips" id="rRisks"></div></div>
-        <div class="rc good"><div class="rc-h">💚 Take these seriously</div>
+        <div class="rc good"><div class="rc-h">💚 Worth keeping up</div>
           <div class="chips">
-            <span class="chip">🩺 Know your BP</span><span class="chip">🩸 Know your sugar</span>
+            <span class="chip">👟 Keep moving</span><span class="chip">🍎 Eat well</span>
             <span class="chip">👟 Stay active</span><span class="chip">🍎 Eat better</span>
-            <span class="chip">🏥 Regular check-ups</span>
+            <span class="chip">😴 Rest well</span>
           </div>
         </div>
       </div>
 
       <div class="offer" id="offer">
         <b>🎁 Heart package unlocked</b>
-        <p>Show this screen at the Fortis desk to claim the World Heart Day cardiac screening package at a special price.</p>
+        <p>Show this screen at the Fortis desk to claim your World Heart Day reward.</p>
         <div class="code" id="offercode">&mdash;</div>
       </div>
 
@@ -900,12 +894,12 @@ const NOTE_COLORS = ['#F4A9B0','#FBD96B','#F2EFE6','#F6B27A','#BFE3C4'];
 
 /* ---- the things that actually count ---- */
 const GOOD = [
-  {art:'🩺', label:'Know your BP'},
-  {art:'💚', label:'Low cholesterol'},
-  {art:'👟', label:'Exercise'},
+  {art:'👟', label:'Daily walk'},
+  {art:'💚', label:'Eat fresh'},
+  {art:'🏃', label:'Exercise'},
   {art:'🍎', label:'Eat healthy'},
-  {art:'🏥', label:'Preventive check'},
-  {art:'🩸', label:'Control blood sugar'},
+  {art:'😴', label:'Sleep well'},
+  {art:'💧', label:'Stay hydrated'},
   {art:'🧘', label:'Stay stress free'}
 ];
 const RISK = [
@@ -3447,7 +3441,7 @@ const TERMS_HTML = `
 <h4>Your details</h4>
 <ul>
   <li>Your <b>name and mobile number will be stored</b> by Fortis Hospital and may be used to send you
-      promotional messages about heart health check-ups and packages.</li>
+      promotional messages about Fortis news and offers.</li>
   <li>You can ask us to delete your details at any time at the contact shown on the standee.</li>
 </ul>`;
 
@@ -3508,7 +3502,7 @@ const TERMS_HTML = `
   const box = document.createElement('div'); box.id='voucherBox'; box.style.display='none';
   const note = document.createElement('div'); note.id='dataNote';
   note.innerHTML = 'Your name and mobile number are stored by Fortis Hospital and may be used to send you '+
-                   'promotional messages about heart health check-ups and packages. '+
+                   'promotional messages about Fortis news and offers. '+
                    'Ask us to delete them any time at the contact on the standee.';
   const actions = done ? done.querySelector('.res-actions, .setup-actions, .actions') : null;
   const host = done ? (done.querySelector('.snapshot-wrap') || done) : null;
@@ -3526,16 +3520,16 @@ function campaignValidate(){
   const nameOK = name.value.trim().length >= 2;
   const mobOK  = /^[6-9]\d{9}$/.test(mob.value.replace(/\D/g,''));
   const ageOK  = !!$('#ageg').value;
-  const scrOK  = !!$('#scr').value;
+  const scrOK  = true;                       // the check-up question has been removed
   const tcOK   = $('#tcOK').checked;
   mark(name,!nameOK); mark(mob,!mobOK);
   document.querySelectorAll('.pills[data-for="ageg"]').forEach(p=>mark(p,!ageOK));
-  document.querySelectorAll('.pills[data-for="scr"]').forEach(p=>mark(p,!scrOK));
+
   const ag=$('#tcAgree'); ag.classList.remove('need'); if(!tcOK){ void ag.offsetWidth; ag.classList.add('need'); }
   if(!nameOK) miss.push('your name');
   if(!mobOK)  miss.push('a valid 10-digit mobile number');
   if(!ageOK)  miss.push('your age group');
-  if(!scrOK)  miss.push('your last check-up');
+
   if(!tcOK)   miss.push('accepting the Terms & Conditions');
   if(miss.length){
     toast('Please add '+miss.slice(0,2).join(' and ')+(miss.length>2?' (and the rest)':''));
@@ -3567,7 +3561,7 @@ async function submitRun(){
   box.style.display='block'; box.className=''; box.innerHTML='<div class="vk">CHECKING YOUR VOUCHER…</div>';
   const body = {
     name: $('#pn').value.trim(), mobile: $('#pm').value.replace(/\D/g,''),
-    age: $('#ageg').value, checkup: $('#scr').value,
+    age: $('#ageg').value, checkup: '',
     consent: !!($('#tcOK')&&$('#tcOK').checked),
     score: P?P.score|0:0, packs: P?P.packs|0:0,
     heartPct: (typeof heartPct==='function'?heartPct()|0:(P?Math.round(P.heart):0)),
