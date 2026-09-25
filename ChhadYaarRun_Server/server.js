@@ -100,6 +100,12 @@ function migrateToOnePerMobile(){
   console.log('Merged old rows into', DB.entries.length, 'players');
   saveDB();
 }
+function saveNow(){
+  if(saveTimer){ clearTimeout(saveTimer); saveTimer=null; }
+  const tmp=DB_FILE+'.tmp';
+  try{ fs.writeFileSync(tmp, JSON.stringify(DB)); fs.renameSync(tmp, DB_FILE); }
+  catch(e){ console.error('DB save failed:', e.message); }
+}
 const istDay = (d=new Date()) =>
   new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
 const istTime = (d=new Date()) =>
@@ -148,17 +154,30 @@ const send = (res,code,body,type='application/json')=>{
   res.end(buf);
 };
 const readBody = req => new Promise((resolve,reject)=>{
-  let n=0, chunks=[];
-  req.on('data',c=>{ n+=c.length; if(n>64*1024){ reject(new Error('too large')); req.destroy(); } chunks.push(c); });
+  let n=0, chunks=[], done=false;
+  req.on('data',c=>{ if(done) return; n+=c.length;
+    if(n>64*1024){ done=true; reject(Object.assign(new Error('too large'),{tooLarge:true})); return; }
+    chunks.push(c); });
   req.on('end',()=>{ try{ resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}')); }catch(e){ reject(e); } });
   req.on('error',reject);
 });
-const authed = q => q.key === ADMIN_KEY;
+const RATE = new Map();                       // ip -> [windowStart, count]
+function rateOK(req, limit=90, windowMs=60000){
+  const ip = String(req.headers['x-forwarded-for']||'').split(',')[0].trim()
+           || req.socket.remoteAddress || 'unknown';
+  const now = Date.now(), r = RATE.get(ip);
+  if(!r || now - r[0] > windowMs){ RATE.set(ip,[now,1]); }
+  else if(++r[1] > limit){ return false; }
+  if(RATE.size > 5000) for(const [k,v] of RATE) if(now - v[0] > windowMs) RATE.delete(k);
+  return true;
+}
+/* the admin key may come as a header (keeps it out of proxy logs) or as ?key= */
+const authed = (q, req) => (req && req.headers['x-admin-key'] === ADMIN_KEY) || q.key === ADMIN_KEY;
 
 /* ---- the table used for the panel and for Excel ---- */
 const COLUMNS = [
   ['day','First played'],['time','Time'],['name','Name'],['mobile','Mobile'],
-  ['age','Age group'],['checkup','Last check-up'],['consent','Consent to contact'],
+  ['age','Age group'],['consent','Consent to contact'],
   ['plays','Plays'],['score','Best score'],['heartPct','Heart %'],['packs','Golden hearts'],
   ['good','Good habits'],['hits','Hits'],['distance','Distance (m)'],
   ['lastDay','Last played'],['lastTime','Last time'],
@@ -166,10 +185,14 @@ const COLUMNS = [
   ['voucherLabel','Voucher won'],['voucherCode','Voucher code'],
   ['device','Device'],['appVersion','App version']
 ];
-const rows = () => DB.entries.map(e => COLUMNS.map(([k]) => e[k]===undefined?'':e[k]));
+const rows = () => DB.entries.map(e => COLUMNS.map(([k]) => safeCell(e[k]===undefined?'':e[k])));
 
+const safeCell = v => {
+  const t = String(v==null?'':v);
+  return /^[=+\-@\t\r]/.test(t) ? "'"+t : t;     // stop Excel treating it as a formula
+};
 function csv(){
-  const esc = v => '"'+String(v==null?'':v).replace(/"/g,'""')+'"';
+  const esc = v => '"'+safeCell(v).replace(/"/g,'""')+'"';
   return [COLUMNS.map(c=>esc(c[1])).join(',')].concat(rows().map(r=>r.map(esc).join(','))).join('\r\n');
 }
 function xlsx(){
@@ -182,10 +205,10 @@ function xlsx(){
   XLSX.utils.book_append_sheet(wb, ws, 'Players');
   XLSX.utils.book_append_sheet(wb,
     XLSX.utils.aoa_to_sheet([['Date','Time','Name','Mobile','Score','Golden hearts','Good habits','Hits','Distance (m)','Voucher code']]
-      .concat(DB.runs.map(r=>[r.day,r.time,r.name,r.mobile,r.score,r.packs,r.good,r.hits,r.distance,r.voucherCode]))),
+      .concat(DB.runs.map(r=>[r.day,r.time,safeCell(r.name),r.mobile,r.score,r.packs,r.good,r.hits,r.distance,r.voucherCode]))),
     'All runs');
   const vouchers = DB.entries.filter(e=>e.voucherCode)
-    .map(e=>[e.day,e.time,e.name,e.mobile,e.voucherLabel,e.voucherCode,e.score,e.packs]);
+    .map(e=>[e.day,e.time,safeCell(e.name),e.mobile,e.voucherLabel,e.voucherCode,e.score,e.packs]);
   XLSX.utils.book_append_sheet(wb,
     XLSX.utils.aoa_to_sheet([['Date','Time','Name','Mobile','Voucher','Code','Score','Golden hearts']].concat(vouchers)),
     'Vouchers');
@@ -235,6 +258,11 @@ function serveStatic(req,res,pathname){
 
 /* ---- server ---- */
 loadDB();
+process.on('uncaughtException', e => console.error('uncaught:', e && e.message));
+process.on('unhandledRejection', e => console.error('unhandled:', e && e.message));
+process.on('SIGTERM', ()=>{ saveNow(); process.exit(0); });
+process.on('SIGINT',  ()=>{ saveNow(); process.exit(0); });
+
 http.createServer(async (req,res)=>{
   const u = url.parse(req.url,true), q = u.query, p = u.pathname;
   res.setHeader('X-Content-Type-Options','nosniff');
@@ -242,7 +270,11 @@ http.createServer(async (req,res)=>{
   if(p==='/healthz') return send(res,200,{ok:true, entries:DB.entries.length});
 
   if(p==='/api/session' && req.method==='POST'){
-    let b; try{ b = await readBody(req); }catch(e){ return send(res,400,{error:'bad request'}); }
+    const ct = String(req.headers['content-type']||'').toLowerCase();
+    if(!ct.startsWith('application/json'))
+      return send(res,415,{error:'send JSON'});
+    let b; try{ b = await readBody(req); }
+    catch(e){ return send(res, e.tooLarge?413:400, {error: e.tooLarge?'body too large':'bad request'}); }
     const now = new Date();
     const entry = {
       id: now.getTime().toString(36)+Math.random().toString(36).slice(2,7),
@@ -260,6 +292,12 @@ http.createServer(async (req,res)=>{
       cameraMoves: b.cameraMoves|0, kioskKey: String(b.kioskKey||'').slice(0,64),
       voucherLabel:'', voucherCode:''
     };
+    /* stall devices (they carry the kiosk key) are never rate limited;
+       everyone else gets a sane cap so the entries file can't be flooded */
+    const fromStall = RULES.kioskKey && b.kioskKey === RULES.kioskKey;
+    if(!fromStall && !rateOK(req))
+      return send(res,429,{error:'too many submissions, slow down'});
+
     const out = decideVoucher(entry);          // judged on THIS run
     delete entry.kioskKey;                     // never stored
 
@@ -290,7 +328,7 @@ http.createServer(async (req,res)=>{
                   score:entry.score, packs:entry.packs, good:entry.good, hits:entry.hits,
                   distance:entry.distance, voucherCode:out.voucher?out.voucher.code:''});
     if(DB.runs.length>20000) DB.runs.splice(0, DB.runs.length-20000);
-    saveDB();
+    if(out.voucher) saveNow(); else saveDB();     // never risk losing an issued code
     return send(res,200,{ok:true, id:row.id, plays:row.plays, voucher:out.voucher||null,
                          reason:out.reason||'', already:out.already||''});
   }
@@ -301,14 +339,14 @@ http.createServer(async (req,res)=>{
     tiers: RULES.tiers.map(t=>({kind:t.kind,label:t.label,minScore:t.minScore,minPacks:t.minPacks|0}))
   });
   if(p==='/admin')            return serveAdmin(res);
-  if(p==='/api/stats')        return authed(q)?send(res,200,stats()):send(res,401,{error:'bad key'});
-  if(p==='/api/entries')      return authed(q)
+  if(p==='/api/stats')        return authed(q,req)?send(res,200,stats()):send(res,401,{error:'bad key'});
+  if(p==='/api/entries')      return authed(q,req)
       ? send(res,200,{columns:COLUMNS.map(c=>c[1]), rows:rows().slice(-(+q.n||100)).reverse()})
       : send(res,401,{error:'bad key'});
-  if(p==='/api/export.csv')   return authed(q)
+  if(p==='/api/export.csv')   return authed(q,req)
       ? send(res,200,'\ufeff'+csv(),'text/csv; charset=utf-8') : send(res,401,{error:'bad key'});
   if(p==='/api/export.xlsx'){
-    if(!authed(q)) return send(res,401,{error:'bad key'});
+    if(!authed(q,req)) return send(res,401,{error:'bad key'});
     try{
       const buf = xlsx();
       res.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
