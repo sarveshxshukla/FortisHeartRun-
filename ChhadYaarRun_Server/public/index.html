@@ -1919,6 +1919,8 @@ const CAM = {
      in the middle. Measured as a fraction of the picture width, so it does not
      depend on the player's height or distance. */
   zoneW:       0.085,   // centre to the line = 8.5% of the picture width
+  zoneCentre:  'frame', // 'frame' = lines always in the middle of the picture
+                        // 'player' = lines centred on where the player calibrated
   laneEnter:   1.00,    // 1.00 means exactly on the line
   laneExit:    0.55,    // come back inside this to return to the middle lane
   laneHold:    0,       // no waiting - crossing the line acts immediately
@@ -2239,6 +2241,9 @@ function bodyY(frame,f){
   return f.noseOK? f.shY*0.6+f.ny*0.4 : f.shY;
 }
 function laneEnter(){return CAM.laneEnter*(calib&&calib.frame==='upper'?CAM.upperLane:1);}
+/* the middle of the three zones: the picture centre by default, so the yellow
+   guides are always symmetrical and "stand in the middle" means the middle */
+function zoneCentre(){return CAM.zoneCentre==='player'&&calib?calib.bx:0.5;}
 function laneExit(){return CAM.laneExit*(calib&&calib.frame==='upper'?CAM.upperLane:1);}
 function makeCalib(buf){
   const n=buf.length, pct=k=>buf.filter(b=>b.f[k]).length/n, avg=fn=>buf.reduce((a,b)=>a+fn(b.f),0)/n;
@@ -2307,7 +2312,7 @@ function onPose(all,now){             // every tracker result lands here
         else if(CAMT.frameGap>120) lead*=0.3;
         DBG.lead=lead;
         const bxp=bx+TRK.vx*lead;                                             // where the body will be
-        const raw=-(bxp-calib.bx)/Math.max(0.02,CAM.zoneW)*(CAM.flip?-1:1);   // 1.0 = on the line
+        const raw=-(bxp-zoneCentre())/Math.max(0.02,CAM.zoneW)*(CAM.flip?-1:1); // 1.0 = on the line
         TRK.off=TRK.euro?TRK.euro.f(raw,now):raw; DBG.sig=TRK.off;
         const en=laneEnter(), ex=laneExit();
         const target= TRK.off>en?2 : TRK.off<-en?0 : Math.abs(TRK.off)<ex?1 : TRK.zone;
@@ -2453,12 +2458,12 @@ function drawSkeleton(all,main){
     g.restore();
   }
   if(calib){                                  // lane zones: where the player must move to switch
-    const S2=CAM.zoneW, en=laneEnter(), xL=(calib.bx-en*S2)*W2, xR=(calib.bx+en*S2)*W2;
+    const S2=CAM.zoneW, en=laneEnter(), ZC=zoneCentre(), xL=(ZC-en*S2)*W2, xR=(ZC+en*S2)*W2;
     let a0,a1;
     if(TRK.zone===1){a0=xL;a1=xR;}
     else{ const imgLeft=(TRK.zone===2)!==!!CAM.flip; a0=imgLeft?0:xR; a1=imgLeft?xL:W2; }
     g.fillStyle='rgba(12,168,84,.16)'; g.fillRect(a0,0,a1-a0,H2);
-    const zx=k=>(calib.bx+k*S2)*W2;
+    const zx=k=>(ZC+k*S2)*W2;
     g.setLineDash([lw*2,lw*2]); g.lineWidth=Math.max(1,lw*0.5);
     for(const k of [-laneEnter(),laneEnter()]){
       g.strokeStyle='rgba(255,201,74,.85)'; g.beginPath(); g.moveTo(zx(k),0); g.lineTo(zx(k),H2); g.stroke();
@@ -3271,6 +3276,14 @@ document.querySelectorAll('#touchControls [data-act]').forEach(btn=>{
 });
 $('#touchControls [data-cam]').addEventListener('pointerdown',e=>{e.preventDefault();toggleCamera();},{passive:false});
 
+function goFullscreen(){
+  try{
+    const el=document.documentElement;
+    if(!document.fullscreenElement && el.requestFullscreen) el.requestFullscreen({navigationUI:'hide'}).catch(()=>{});
+  }catch(e){}
+}
+['go-reg','go-play'].forEach(id=>{ const b=document.getElementById(id); if(b) b.addEventListener('click',goFullscreen); });
+window.addEventListener('keydown',e=>{ if(e.code==='KeyG'){ document.fullscreenElement?document.exitFullscreen():goFullscreen(); } });
 $('#go-reg').onclick=()=>{show('#s-reg');$('#s-reg .ux-wrap').scrollTop=0;document.querySelector('.runner-card.active')?.focus();};
 
 ['pointerdown','keydown','touchstart'].forEach(ev=>{
