@@ -3437,6 +3437,7 @@ const CAMPAIGN = {
   scoreForConsult: 8000,         // 50% off cardiac consultation
   scoreForFree:    12000,        // free cardiac consultation
   scoreForPackage: 10000,        // + all three golden hearts = Rs. 999 package
+  scoreForMobile:  10000,        // play-anywhere offer: 25% off a Preventive Health Check
   heartsForPackage: 3,
   maxPerDay: 5,
   version: 'v11'
@@ -3479,10 +3480,16 @@ const TERMS_HTML = `
   <li><b>${CAMPAIGN.scoreForPackage.toLocaleString('en-IN')}+ with all ${CAMPAIGN.heartsForPackage} Fortis golden hearts</b>
       &mdash; Complimentary Cardiac Package worth Rs. 999/-.</li>
 </ul>
+<h4>Play-anywhere offer</h4>
+<ul>
+  <li><b>${CAMPAIGN.scoreForMobile.toLocaleString('en-IN')}+ on any device</b> &mdash; 25% off a Preventive Health Check package.
+      This one counts whether you play with the camera, the keys or the touch buttons, on a phone or anywhere else.</li>
+  <li>One per mobile number. Separate from the stall vouchers, so you can hold one of each.</li>
+</ul>
 <h4>Where you must play</h4>
 <ul>
-  <li>Vouchers are only issued for games played <b>on the camera at the Fortis stall</b>.
-      Playing from a shared link on a phone does not qualify.</li>
+  <li>The <b>stall vouchers above</b> are only issued for games played <b>on the camera at the Fortis stall</b>.</li>
+  <li>The <b>25% play-anywhere offer</b> can be won on any device, any controls.</li>
 </ul>
 <h4>Both codes</h4>
 <ul>
@@ -3607,7 +3614,8 @@ function voucherHTML(v, reason, already){
     <div class="vn" style="margin-top:6px">
       ${CAMPAIGN.scoreForConsult.toLocaleString('en-IN')}+ = 50% off consultation ·
       ${CAMPAIGN.scoreForFree.toLocaleString('en-IN')}+ = free consultation ·
-      ${CAMPAIGN.scoreForPackage.toLocaleString('en-IN')}+ with all ${CAMPAIGN.heartsForPackage} golden hearts = Rs. 999 package</div>`;
+      ${CAMPAIGN.scoreForPackage.toLocaleString('en-IN')}+ with all ${CAMPAIGN.heartsForPackage} golden hearts = Rs. 999 package
+      <br>Anywhere, any controls: ${CAMPAIGN.scoreForMobile.toLocaleString('en-IN')}+ = 25% off a Preventive Health Check</div>`;
 }
 async function submitRun(){
   const box = document.getElementById('voucherBox'); if(!box) return;
